@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实验室助手</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- 侧边栏 -->
+  <aside id="sidebar">
+    <div class="brand">🧪 实验室助手</div>
+    <div class="kb-section">
+      <div class="kb-section-head">
+        <span>知识库</span>
+        <button id="btn-new-kb" class="icon-btn" title="新建知识库">＋</button>
+      </div>
+      <ul id="kb-list"></ul>
+    </div>
+    <div class="sidebar-foot">
+      <button id="btn-open-settings" class="side-btn">⚙️ 设置</button>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main id="main">
+
+    <!-- 聊天视图 -->
+    <section id="view-chat" class="view">
+      <header class="chat-head">
+        <div class="chat-head-left">
+          <span class="chat-title" id="chat-title">问答</span>
+          <select id="chat-kb-select" title="切换知识库"></select>
+        </div>
+        <div class="chat-head-actions">
+          <div class="dropdown">
+            <button id="btn-export" class="btn">📝 导出笔记 ▾</button>
+            <div class="dropdown-menu hidden" id="export-menu">
+              <button data-format="md">Markdown（.md）</button>
+              <button data-format="docx">Word（.docx）</button>
+            </div>
+          </div>
+          <button id="btn-new-conv" class="btn">新对话</button>
+          <button id="btn-clear-conv" class="btn btn-ghost" title="清空当前对话">清空</button>
+        </div>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <footer class="chat-input">
+        <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="btn-send" class="btn btn-primary">发送</button>
+      </footer>
+    </section>
+
+    <!-- 设置视图 -->
+    <section id="view-settings" class="view hidden">
+      <div class="settings-wrap">
+        <div class="settings-head">
+          <button id="btn-back-chat" class="btn btn-ghost">← 返回对话</button>
+          <h2>设置</h2>
+        </div>
+        <div class="tabs">
+          <button class="tab active" data-tab="basic">基本设置</button>
+          <button class="tab" data-tab="debug">召回调试</button>
+        </div>
+
+        <!-- 基本设置 -->
+        <div id="tab-basic" class="tab-panel">
+          <div class="form-row">
+            <label>百炼 API Key
+              <span class="hint">留空表示继续使用内置 Key；填写则替换为自己的 Key</span>
+            </label>
+            <input type="password" id="set-api-key" placeholder="未配置内置 Key 时必填" autocomplete="off">
+          </div>
+          <div class="form-row form-grid">
+            <label>对话模型<input id="set-llm-model" value="qwen-plus"></label>
+            <label>嵌入模型<input id="set-embed-model" value="text-embedding-v4"></label>
+            <label>检索条数 top_k<input id="set-top-k" type="number" min="1" max="10" value="6"></label>
+            <label>相似度阈值<input id="set-threshold" type="number" min="0" max="1" step="0.05" value="0.3"></label>
+          </div>
+          <div class="form-row">
+            <button id="btn-save-settings" class="btn btn-primary">保存设置</button>
+          </div>
+          <div class="info-box">
+            <b>费用说明</b>：每次问答按量计费约 1~2 分钱。查询余额：
+            <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">百炼控制台</a>。
+            若余额耗尽会报错，请及时充值（20 元可用很久）。
+          </div>
+          <div class="info-box">
+            <b>数据与隐私</b>：所有文档、对话历史均保存在本机（
+            <code id="data-dir"></code>）。
+            问答时检索到的文档片段会发送给阿里云百炼用于生成回答，请注意文档内容的合规性。
+          </div>
+        </div>
+
+        <!-- 召回调试 -->
+        <div id="tab-debug" class="tab-panel hidden">
+          <div class="info-box">输入问题查看检索命中的原文段落与相似度分数，用于排查「资料里有却答不出」的情况（复刻 Dify 召回测试）。</div>
+          <div class="form-row">
+            <input id="dbg-question" placeholder="输入问题，如：检测药物内一般杂质的基础项目和合格范围是什么？">
+          </div>
+          <div class="form-row form-grid">
+            <label>知识库<select id="dbg-kb"></select></label>
+            <label>top_k<input id="dbg-topk" type="number" min="1" max="20" value="8"></label>
+            <label>阈值（0=看全部）<input id="dbg-threshold" type="number" min="0" max="1" step="0.05" value="0"></label>
+            <label>&nbsp;<button id="btn-dbg-search" class="btn btn-primary">查询</button></label>
+          </div>
+          <div id="dbg-results"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 引用来源抽屉 -->
+  <div id="source-panel" class="hidden">
+    <div class="source-head">
+      <span>📚 引用来源</span>
+      <button id="btn-close-source" class="icon-btn">✕</button>
+    </div>
+    <div id="source-content"></div>
+  </div>
+
+  <!-- 新建知识库弹窗 -->
+  <div id="modal-kb" class="modal hidden">
+    <div class="modal-box">
+      <h3>新建知识库</h3>
+      <p class="modal-desc">给知识库起个名字，并选择课程资料（txt / pdf / docx，可多选或整个文件夹）。</p>
+      <input id="kb-name" placeholder="知识库名称，如：仪器分析">
+      <div class="row">
+        <button id="btn-pick-files" class="btn">📄 选择文件</button>
+        <button id="btn-pick-folder" class="btn">📁 选择文件夹</button>
+        <span id="kb-picked" class="hint">未选择</span>
+      </div>
+      <input type="file" id="file-input" multiple accept=".txt,.pdf,.docx" class="hidden">
+      <input type="file" id="folder-input" webkitdirectory class="hidden">
+      <div id="kb-create-progress" class="hidden">
+        <div class="progress-bar"><div id="kb-create-bar"></div></div>
+        <span id="kb-create-msg"></span>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-cancel-kb" class="btn btn-ghost">取消</button>
+        <button id="btn-create-kb" class="btn btn-primary">创建并建立索引</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 首次启动向导 -->
+  <div id="modal-wizard" class="modal hidden">
+    <div class="modal-box">
+      <h3>👋 欢迎使用实验室助手</h3>
+      <p class="modal-desc">
+        你可以直接开始提问（使用内置 API 额度）；也可以填写自己的阿里云百炼 API Key 长期使用：
+      </p>
+      <input type="password" id="wiz-api-key" placeholder="百炼 API Key（可选）" autocomplete="off">
+      <p class="hint">没有 Key？到 <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">百炼控制台</a> 免费注册并创建 API-KEY，充值 20 元可用很久。</p>
+      <div class="modal-actions">
+        <button id="btn-wiz-skip" class="btn btn-ghost">跳过（使用内置 Key）</button>
+        <button id="btn-wiz-save" class="btn btn-primary">保存并开始</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 吐司 -->
+  <div id="toast" class="hidden"></div>
+</div>
+
+<script src="/static/js/md.js"></script>
+<script src="/static/js/app.js"></script>
+<script src="/static/js/chat.js"></script>
+<script src="/static/js/kb.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/debug.js"></script>
+</body>
+</html>
