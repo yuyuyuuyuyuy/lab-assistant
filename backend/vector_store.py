@@ -73,21 +73,33 @@ class VectorStore:
         return {r[0]: (r[1], r[2]) for r in rows}
 
     def copy_file(self, other, file_rel):
-        """从另一个（旧）库里把某个未变化文件的全部块原样搬过来，免重新向量化。"""
+        """从另一个（旧）库里把某个未变化文件的全部块搬过来，免重新向量化。
+
+        id 在新库里**重新分配**（不复用旧 id）：同一轮重建里新旧文件混合时，
+        保留旧 id 会与新文件的 id 区间重叠，导致 UNIQUE constraint failed。
+        """
         rows = other.db.execute(
             "SELECT id, file, text, meta FROM chunks WHERE file=?", (file_rel,)
         ).fetchall()
+        emb_by_id = {
+            rowid: emb
+            for rowid, emb in other.db.execute(
+                "SELECT vec.rowid, vec.embedding FROM vec "
+                "WHERE vec.rowid IN (SELECT id FROM chunks WHERE file=?)",
+                (file_rel,),
+            ).fetchall()
+        }
+        next_id = self.max_id()
         for r in rows:
+            next_id += 1
             self.db.execute(
-                "INSERT INTO chunks(id, file, text, meta) VALUES (?,?,?,?)", r
+                "INSERT INTO chunks(id, file, text, meta) VALUES (?,?,?,?)",
+                (next_id, r[1], r[2], r[3]),
             )
-        vec_rows = other.db.execute(
-            "SELECT vec.rowid, vec.embedding FROM vec "
-            "WHERE vec.rowid IN (SELECT id FROM chunks WHERE file=?)",
-            (file_rel,),
-        ).fetchall()
-        for rowid, emb in vec_rows:
-            self.db.execute("INSERT INTO vec(rowid, embedding) VALUES (?,?)", (rowid, emb))
+            self.db.execute(
+                "INSERT INTO vec(rowid, embedding) VALUES (?,?)",
+                (next_id, emb_by_id[r[0]]),
+            )
         self.db.commit()
 
     # ---- 检索 ----

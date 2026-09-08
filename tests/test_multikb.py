@@ -112,6 +112,32 @@ def main():
         msgs = store.get_messages(conv_id)
         check("delete_last_assistant 只删最后一条助手", [m["content"] for m in msgs] == ["问题一", "回答一", "问题二"], str(msgs))
 
+        # 9. 增量索引回归：先建 2 文件 → 再加 1 新文件重建（旧块复制 id 必须重分配，
+        #    否则与新文件的 id 区间重叠 → UNIQUE constraint failed: chunks.id）
+        mix_kb = kb_mod.create_kb("多选增量回归")
+        try:
+            d = kb_mod.kb_paths(mix_kb)["docs"]
+            for i in range(2):
+                with open(os.path.join(d, f"旧文件{i}.txt"), "w", encoding="utf-8") as f:
+                    f.write(f"旧文件{i}的知识点内容：仅用于增量回归测试。\n")
+            kb_mod.start_ingest(mix_kb, settings)
+            st = wait_ingest(mix_kb)
+            check("增量回归-首建", not st.get("error") and st.get("stats", {}).get("chunks") == 2, str(st))
+            with open(os.path.join(d, "新文件.txt"), "w", encoding="utf-8") as f:
+                f.write("新文件的知识点内容：混合新旧文件的增量重建场景。\n")
+            kb_mod.start_ingest(mix_kb, settings)
+            st = wait_ingest(mix_kb)
+            check("增量回归-混合重建（旧复制+新向量化）",
+                  not st.get("error") and st.get("stats", {}).get("files") == 3
+                  and not st.get("stats", {}).get("errors")
+                  and st.get("stats", {}).get("chunks") == 3,
+                  str(st))
+            kb_mod.start_ingest(mix_kb, settings)
+            st = wait_ingest(mix_kb)
+            check("增量回归-全量复制", not st.get("error") and st.get("stats", {}).get("copied") == 3, str(st))
+        finally:
+            kb_mod.delete_kb(mix_kb)
+
     finally:
         kb_mod.delete_kb(kb_id)
 

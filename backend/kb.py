@@ -18,6 +18,11 @@ from .vector_store import VectorStore
 INGEST_STATUS = {}  # kb_id -> {running, pct, message, error, stats}
 OCR_STATUS = {}     # kb_id -> {running, pct, message, current, error}（扫描版 PDF 整本 OCR）
 
+# 防止同一知识库并发建索引：两个 build_index 同时写同一个 .tmp 会互相踩踏
+# （实测：连续两次 ocr-save 触发两个索引进程 → UNIQUE constraint failed: chunks.id）
+INGEST_LOCKS = {}    # kb_id -> threading.Lock
+INGEST_PENDING = {}  # kb_id -> bool（锁占用期间的调用：本轮结束后自动补跑一次）
+
 
 def ensure_data_dirs():
     os.makedirs(config.KBS_DIR, exist_ok=True)
@@ -109,11 +114,17 @@ def import_folder(kb_id, folder):
 
 
 def start_ingest(kb_id, settings):
-    """后台线程重建索引（增量）。"""
+    """后台线程重建索引（增量）。同一库的并发调用自动合并（本轮结束补跑一次）。"""
     p = kb_paths(kb_id)
     os.makedirs(os.path.dirname(p["index"]), exist_ok=True)
     row = store.get_kb(kb_id)
     kb_name = row["name"] if row else kb_id
+    lock = INGEST_LOCKS.setdefault(kb_id, threading.Lock())
+    if lock.locked():
+        # 已有索引任务在跑：标记待补跑（增量索引幂等，最后跑一次覆盖全部变更）
+        INGEST_PENDING[kb_id] = True
+        return
+    lock.acquire()
 
     def cb(pct, message):
         INGEST_STATUS[kb_id] = {
@@ -123,16 +134,21 @@ def start_ingest(kb_id, settings):
 
     def work():
         try:
-            stats = ingest.build_index(p["index"], p["docs"], kb_name, settings, cb)
-            INGEST_STATUS[kb_id] = {
-                "running": False, "pct": 100, "message": "索引完成",
-                "error": None, "stats": stats, "updated_at": time.time(),
-            }
-        except Exception as e:
-            INGEST_STATUS[kb_id] = {
-                "running": False, "pct": 0, "message": "索引失败",
-                "error": str(e), "stats": None, "updated_at": time.time(),
-            }
+            try:
+                stats = ingest.build_index(p["index"], p["docs"], kb_name, settings, cb)
+                INGEST_STATUS[kb_id] = {
+                    "running": False, "pct": 100, "message": "索引完成",
+                    "error": None, "stats": stats, "updated_at": time.time(),
+                }
+            except Exception as e:
+                INGEST_STATUS[kb_id] = {
+                    "running": False, "pct": 0, "message": "索引失败",
+                    "error": str(e), "stats": None, "updated_at": time.time(),
+                }
+        finally:
+            lock.release()
+            if INGEST_PENDING.pop(kb_id, False):
+                start_ingest(kb_id, settings)
 
     INGEST_STATUS[kb_id] = {
         "running": True, "pct": 0, "message": "启动中",
