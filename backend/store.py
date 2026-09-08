@@ -37,12 +37,27 @@ def now():
 
 # ---------- 会话 ----------
 
-def new_conversation(kb_id, title=None):
+def parse_scope(value):
+    """kb_id 列可能是 "all"、单个 id、或 JSON 数组字符串（二期多选库）；统一解析为 id 列表。"""
+    if not value:
+        return ["all"]
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list) and parsed:
+            return [str(x) for x in parsed]
+    except Exception:
+        pass
+    return [str(value)]
+
+
+def new_conversation(kb_ids, title=None):
+    """kb_ids 可为 id 列表或旧式 "all"/单 id 字符串；列表序列化为 JSON 存入 kb_id 列。"""
+    scope = json.dumps([str(x) for x in kb_ids], ensure_ascii=False) if isinstance(kb_ids, list) else str(kb_ids or "all")
     conv_id = uuid.uuid4().hex[:12]
     db = _connect()
     db.execute(
         "INSERT INTO conversations(id, kb_id, title, created_at) VALUES (?,?,?,?)",
-        (conv_id, kb_id, title or "新对话", now()),
+        (conv_id, scope, title or "新对话", now()),
     )
     db.commit()
     db.close()
@@ -51,14 +66,27 @@ def new_conversation(kb_id, title=None):
 
 def list_conversations(kb_id=None):
     db = _connect()
-    if kb_id:
-        rows = db.execute(
-            "SELECT * FROM conversations WHERE kb_id=? ORDER BY created_at DESC", (kb_id,)
-        ).fetchall()
-    else:
-        rows = db.execute("SELECT * FROM conversations ORDER BY created_at DESC").fetchall()
+    rows = db.execute("SELECT * FROM conversations ORDER BY created_at DESC").fetchall()
     db.close()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["kb_ids"] = parse_scope(d["kb_id"])
+        out.append(d)
+    if kb_id:
+        out = [d for d in out if "all" in d["kb_ids"] or kb_id in d["kb_ids"]]
+    return out
+
+
+def delete_last_assistant(conv_id):
+    """删除会话最后一条助手消息（重新生成时用，保证历史问答配对不重复）。"""
+    db = _connect()
+    db.execute(
+        "DELETE FROM messages WHERE id = (SELECT MAX(id) FROM messages WHERE conv_id=? AND role='assistant')",
+        (conv_id,),
+    )
+    db.commit()
+    db.close()
 
 
 def set_conversation_title(conv_id, title):

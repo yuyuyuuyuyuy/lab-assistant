@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>实验室助手</title>
 <link rel="stylesheet" href="/static/css/style.css">
+<script>
+/* 防深色模式启动闪白：先用 localStorage 镜像决定主题，settings.json 读取后再修正 */
+(function () {
+  try {
+    var m = localStorage.getItem("la_theme");
+    var dark = m ? m === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (dark) document.documentElement.classList.add("dark");
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 <div id="app">
@@ -15,7 +25,10 @@
     <div class="kb-section">
       <div class="kb-section-head">
         <span>知识库</span>
-        <button id="btn-new-kb" class="icon-btn" title="新建知识库">＋</button>
+        <span class="kb-head-btns">
+          <button id="btn-ocr" class="icon-btn" title="拍照识字：手写笔记/课本照片转文字入库">📷</button>
+          <button id="btn-new-kb" class="icon-btn" title="新建知识库">＋</button>
+        </span>
       </div>
       <ul id="kb-list"></ul>
     </div>
@@ -32,7 +45,10 @@
       <header class="chat-head">
         <div class="chat-head-left">
           <span class="chat-title" id="chat-title">问答</span>
-          <select id="chat-kb-select" title="切换知识库"></select>
+          <div class="kb-picker">
+            <button id="btn-kb-picker" class="kb-picker-btn" title="选择参与问答的知识库（可多选）">全部知识库 ▾</button>
+            <div id="kb-picker-menu" class="kb-picker-menu hidden"></div>
+          </div>
         </div>
         <div class="chat-head-actions">
           <div class="dropdown">
@@ -42,6 +58,7 @@
               <button data-format="docx">Word（.docx）</button>
             </div>
           </div>
+          <button id="btn-history" class="btn btn-ghost" title="查看历史对话">🕘 历史</button>
           <button id="btn-new-conv" class="btn">新对话</button>
           <button id="btn-clear-conv" class="btn btn-ghost" title="清空当前对话">清空</button>
         </div>
@@ -78,6 +95,15 @@
           <div class="form-row form-grid">
             <label>对话模型<input id="set-llm-model" value="qwen-plus"></label>
             <label>嵌入模型<input id="set-embed-model" value="text-embedding-v4"></label>
+            <label>OCR 模型
+              <span class="hint">手写/公式用 qwen3-vl-plus；印刷体可用 qwen-vl-ocr-latest 更省</span>
+              <input id="set-ocr-model" value="qwen3-vl-plus"></label>
+            <label>外观主题
+              <select id="set-theme">
+                <option value="auto">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select></label>
             <label>检索条数 top_k<input id="set-top-k" type="number" min="1" max="10" value="6"></label>
             <label>相似度阈值<input id="set-threshold" type="number" min="0" max="1" step="0.05" value="0.3"></label>
           </div>
@@ -114,15 +140,6 @@
     </section>
   </main>
 
-  <!-- 引用来源抽屉 -->
-  <div id="source-panel" class="hidden">
-    <div class="source-head">
-      <span>📚 引用来源</span>
-      <button id="btn-close-source" class="icon-btn">✕</button>
-    </div>
-    <div id="source-content"></div>
-  </div>
-
   <!-- 新建知识库弹窗 -->
   <div id="modal-kb" class="modal hidden">
     <div class="modal-box">
@@ -143,6 +160,65 @@
       <div class="modal-actions">
         <button id="btn-cancel-kb" class="btn btn-ghost">取消</button>
         <button id="btn-create-kb" class="btn btn-primary">创建并建立索引</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 拍照识字弹窗 -->
+  <div id="modal-ocr" class="modal hidden">
+    <div class="modal-box modal-box-wide">
+      <h3>📷 拍照识字</h3>
+      <p class="modal-desc">
+        选择手写笔记/课本照片，AI 识别为文字，校对修改后可保存进知识库参与问答。
+        图片将发送至你配置的百炼模型识别（约 1~2 分/张），识别仅供参考，请以原文为准。
+      </p>
+      <div class="row">
+        <button id="btn-ocr-pick" class="btn">🖼 选择图片（可多选）</button>
+        <span id="ocr-picked" class="hint">未选择 · 也可直接 Ctrl+V 粘贴截图</span>
+      </div>
+      <input type="file" id="ocr-file-input" multiple accept="image/*" class="hidden">
+      <div id="ocr-dropzone" class="ocr-dropzone">把图片拖到这里，或按 Ctrl+V 粘贴截图</div>
+      <div id="ocr-results"></div>
+      <div class="row ocr-save-row hidden" id="ocr-save-row">
+        <label class="ocr-save-label">保存到知识库
+          <select id="ocr-target-kb"></select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-ocr-cancel" class="btn btn-ghost">关闭</button>
+        <button id="btn-ocr-run" class="btn btn-primary">开始识别</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 会话历史弹窗 -->
+  <div id="modal-history" class="modal hidden">
+    <div class="modal-box">
+      <h3>🕘 历史对话</h3>
+      <p class="modal-desc">点击对话继续聊；对话按创建时间倒序排列。</p>
+      <div id="history-list"></div>
+      <div class="modal-actions">
+        <button id="btn-history-close" class="btn btn-ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 整本 OCR 弹窗（扫描版 PDF） -->
+  <div id="modal-ocr-pdf" class="modal hidden">
+    <div class="modal-box">
+      <h3>📑 整本 OCR（扫描版 PDF）</h3>
+      <p class="modal-desc">
+        把无文字层的扫描版 PDF 逐页识别为文字后入库，问答引用会标注「第N页」。
+        每页约 0.5~2 分钱、3~6 秒，页数越多耗时越长（200 页约 10~20 分钟）。
+        识别期间可关闭本弹窗，任务在后台继续。
+      </p>
+      <div id="ocr-pdf-list"></div>
+      <div id="ocr-pdf-progress" class="hidden">
+        <div class="progress-bar"><div id="ocr-pdf-bar"></div></div>
+        <span id="ocr-pdf-msg"></span>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-ocr-pdf-cancel" class="btn btn-ghost">关闭</button>
       </div>
     </div>
   </div>
@@ -171,6 +247,7 @@
 <script src="/static/js/app.js"></script>
 <script src="/static/js/chat.js"></script>
 <script src="/static/js/kb.js"></script>
+<script src="/static/js/ocr.js"></script>
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/debug.js"></script>
 </body>

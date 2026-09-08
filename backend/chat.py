@@ -30,7 +30,8 @@ def build_user_content(question, hits, history):
         refs = []
         for i, h in enumerate(hits, 1):
             src = h.get("meta", {})
-            tag = "｜".join(x for x in (src.get("kb", ""), src.get("category", ""), src.get("source", "")) if x)
+            page = src.get("page")
+            tag = "｜".join(x for x in (src.get("kb", ""), src.get("category", ""), src.get("source", ""), f"第{page}页" if page else "") if x)
             refs.append(f"[{i}]（来源：{tag}）\n{h['text']}")
         parts.append("【参考资料】\n" + "\n\n".join(refs))
     else:
@@ -66,15 +67,19 @@ def extract_citations(answer, hits):
             seen.add(n)
             h = hits[n - 1]
             meta = h.get("meta", {})
+            file = h.get("file", "")
+            if file.endswith(".ocr.json"):
+                file = file[: -len(".ocr.json")]  # sidecar 显示为原 PDF 名
             out.append(
                 {
                     "n": n,
                     "text": h["text"],
                     "score": h["score"],
-                    "file": h.get("file", ""),
+                    "file": file,
                     "kb_name": h.get("kb_name") or meta.get("kb", ""),
                     "source": meta.get("source", ""),
                     "category": meta.get("category", ""),
+                    "page": meta.get("page", ""),
                 }
             )
     return out

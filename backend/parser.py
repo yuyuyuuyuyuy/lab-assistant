@@ -77,8 +77,25 @@ def parse_pdf(path):
     finally:
         doc.close()
     if pages_text and scanned / len(pages_text) > 0.7:
-        raise ValueError("疑似扫描版 PDF（缺少文字层），图片 OCR 属二期功能，暂不支持")
+        raise ValueError("疑似扫描版 PDF（缺少文字层），请在知识库中使用「整本 OCR」识别后入库")
     return split_paragraphs("\n\n".join(pages_text))
+
+
+OCR_SIDECAR_EXT = ".ocr.json"  # 整本 OCR 结果：与原 PDF 同目录的「文件名.pdf.ocr.json」
+
+
+def parse_ocr_json(path):
+    """解析整本 OCR 的 sidecar 文件，返回 [(页面文本, 页码)]（空页跳过）。"""
+    import json
+
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    out = []
+    for p in data.get("pages") or []:
+        text = (p.get("text") or "").strip()
+        if text:
+            out.append((text, p.get("page")))
+    return out
 
 
 def parse_docx(path):

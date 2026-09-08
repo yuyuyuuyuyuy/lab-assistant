@@ -2,12 +2,13 @@
 """Flask 后端：静态前端 + /api 路由（薄壳，逻辑都在 backend 各模块）。"""
 import json
 import os
+import re
 
 import flask
 from flask import Flask, Response, jsonify, request
 
 import config
-from . import chat, export, kb as kb_mod, search, store
+from . import chat, export, kb as kb_mod, ocr, search, store
 from .embeddings import make_client
 
 # ---------------- 设置 ----------------
@@ -35,32 +36,32 @@ def save_settings(s):
 def settings_public(s):
     out = {k: v for k, v in s.items() if k != "api_key"}
     out["has_key"] = bool(s.get("api_key"))
+    out["data_dir"] = config.DATA_DIR
     return out
 
 
-def _gather_hits(kb_scope, vec, top_k, threshold, settings):
-    """按作用域检索：单个库或全部库合并。"""
+def _parse_kb_ids(data):
+    """请求体的知识库作用域：kb_ids 数组优先，兼容旧 kb_id 单值；统一返回 id 列表（"all"=全部）。"""
+    ids = data.get("kb_ids")
+    if isinstance(ids, list) and ids:
+        return [str(x) for x in ids]
+    return [str(data.get("kb_id") or "all")]
+
+
+def _gather_hits(kb_ids, vec, top_k, threshold, settings):
+    """按作用域检索：kb_ids 为 id 列表（含 "all" 表示全部库），统一走多库合并检索。"""
     kbs = store.list_kbs()
-    if kb_scope == "all":
-        stores = []
-        for row in kbs:
-            st = kb_mod.open_store(row["id"])
-            if st is not None:
-                stores.append((row["id"], row["name"], st))
-        hits = search.search_multi(stores, vec, top_k, threshold)
+    targets = kbs if "all" in kb_ids else [row for row in kbs if row["id"] in kb_ids]
+    stores = []
+    for row in targets:
+        st = kb_mod.open_store(row["id"])
+        if st is not None:
+            stores.append((row["id"], row["name"], st))
+    try:
+        return search.search_multi(stores, vec, top_k, threshold)
+    finally:
         for st in stores:
             st[2].close()
-        return hits
-    row = store.get_kb(kb_scope)
-    if row is None:
-        return []
-    st = kb_mod.open_store(kb_scope)
-    if st is None:
-        return []
-    try:
-        return search.search_store(st, vec, top_k, threshold)
-    finally:
-        st.close()
 
 
 def _sse(obj):
@@ -98,7 +99,7 @@ def create_app():
         s = load_settings()
         if data.get("api_key"):
             s["api_key"] = data["api_key"].strip()
-        for k in ("llm_model", "embed_model", "top_k", "score_threshold"):
+        for k in ("llm_model", "embed_model", "top_k", "score_threshold", "ocr_model", "theme"):
             if k in data:
                 s[k] = data[k]
         s["first_run"] = False
@@ -118,6 +119,7 @@ def create_app():
                 st.close()
             d["docs"] = len(kb_mod.list_docs(row["id"]))
             d["ingest"] = kb_mod.get_ingest_status(row["id"]) or {"running": False}
+            d["ocr"] = kb_mod.get_ocr_status(row["id"]) or {"running": False}
             out.append(d)
         return jsonify({"kbs": out})
 
@@ -186,6 +188,79 @@ def create_app():
             kb_mod.start_ingest(kb_id, load_settings())
         return jsonify({"ok": True, "imported": imported})
 
+    # ---- OCR ----
+    @app.post("/api/ocr")
+    def ocr_images():
+        files = [f for f in request.files.getlist("files") if f.filename]
+        if not files:
+            return jsonify({"ok": False, "error": "未收到图片"}), 400
+        settings = load_settings()
+        try:
+            client = make_client(settings)
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        results = []
+        for f in files:
+            name = os.path.basename(f.filename) or "未命名"
+            data = f.read()
+            if len(data) > config.MAX_FILE_MB * 1024 * 1024:
+                results.append({"name": name, "text": "", "error": "图片超过 20MB"})
+                continue
+            uri = ocr.preprocess_image(data)
+            if uri is None:
+                results.append({"name": name, "text": "", "error": "无法解析图片（仅支持常见图片格式）"})
+                continue
+            try:
+                text = ocr.recognize_image(client, settings["ocr_model"], uri)
+                results.append({"name": name, "text": text, "error": None})
+            except Exception as e:
+                results.append({"name": name, "text": "", "error": str(e)})
+        return jsonify({"ok": True, "results": results})
+
+    @app.post("/api/kbs/<kb_id>/ocr-pdf")
+    def ocr_pdf(kb_id):
+        row = store.get_kb(kb_id)
+        if row is None:
+            return jsonify({"ok": False, "error": "知识库不存在"}), 404
+        if row["builtin"]:
+            return jsonify({"ok": False, "error": "内置知识库不可修改"}), 400
+        data = request.get_json(force=True) or {}
+        rel = (data.get("rel") or "").strip()
+        if not rel:
+            return jsonify({"ok": False, "error": "缺少文件名"}), 400
+        try:
+            kb_mod.start_pdf_ocr(kb_id, rel, load_settings())
+            return jsonify({"ok": True})
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
+    @app.post("/api/kbs/<kb_id>/ocr-save")
+    def ocr_save(kb_id):
+        row = store.get_kb(kb_id)
+        if row is None:
+            return jsonify({"ok": False, "error": "知识库不存在"}), 404
+        if row["builtin"]:
+            return jsonify({"ok": False, "error": "内置知识库不可修改"}), 400
+        data = request.get_json(force=True) or {}
+        text = (data.get("text") or "").strip()
+        name = (data.get("name") or "").strip() or "OCR笔记"
+        if not text:
+            return jsonify({"ok": False, "error": "识别文本为空"}), 400
+        safe = re.sub(r'[\\/:*?"<>|\r\n]', "_", name)
+        if safe.lower().endswith(".txt"):
+            safe = safe[:-4]
+        docs_dir = kb_mod.kb_paths(kb_id)["docs"]
+        os.makedirs(docs_dir, exist_ok=True)
+        path = os.path.join(docs_dir, safe + ".txt")
+        n = 2
+        while os.path.exists(path):
+            path = os.path.join(docs_dir, f"{safe}({n}).txt")
+            n += 1
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        kb_mod.start_ingest(kb_id, load_settings())
+        return jsonify({"ok": True, "file": os.path.basename(path)})
+
     # ---- 对话 ----
     @app.get("/api/conversations")
     def list_conversations():
@@ -194,8 +269,8 @@ def create_app():
     @app.post("/api/conversations")
     def create_conversation():
         data = request.get_json(force=True) or {}
-        kb_scope = data.get("kb_id") or "all"
-        conv_id = store.new_conversation(kb_scope)
+        kb_ids = _parse_kb_ids(data)
+        conv_id = store.new_conversation(kb_ids)
         return jsonify({"ok": True, "id": conv_id})
 
     @app.get("/api/conversations/<conv_id>/messages")
@@ -207,19 +282,33 @@ def create_app():
         store.delete_conversation(conv_id)
         return jsonify({"ok": True})
 
+    @app.post("/api/conversations/<conv_id>/messages")
+    def append_message(conv_id):
+        """补存一条消息（停止生成时保存半截回答，保持历史问答配对）。"""
+        data = request.get_json(force=True) or {}
+        content = (data.get("content") or "").strip()
+        role = data.get("role") if data.get("role") in ("user", "assistant") else "assistant"
+        if content:
+            store.add_message(conv_id, role, content, data.get("citations") or [])
+        return jsonify({"ok": True})
+
     @app.post("/api/chat")
     def chat_route():
         data = request.get_json(force=True) or {}
         question = (data.get("question") or "").strip()
-        kb_scope = data.get("kb_id") or "all"
+        kb_ids = _parse_kb_ids(data)
         conv_id = data.get("conv_id")
         if not question:
             return jsonify({"ok": False, "error": "问题不能为空"}), 400
         if not conv_id:
-            conv_id = store.new_conversation(kb_scope, question[:24])
+            conv_id = store.new_conversation(kb_ids, question[:24])
         elif not store.get_messages(conv_id):
             store.set_conversation_title(conv_id, question[:24])
-        store.add_message(conv_id, "user", question)
+        if not data.get("regenerate"):
+            store.add_message(conv_id, "user", question)
+        else:
+            # 重新生成：删掉上一条助手回答，不重复存用户问题
+            store.delete_last_assistant(conv_id)
 
         def gen():
             try:
@@ -229,7 +318,7 @@ def create_app():
                 # 多轮追问改写：只用于检索（把「它」「该法」补全成具体对象），回答仍用原问题+历史
                 search_question = chat.rewrite_question(client, settings, question, history)
                 vec = search.query_vector(client, search_question, settings["embed_model"])
-                hits = _gather_hits(kb_scope, vec, settings["top_k"], settings["score_threshold"], settings)
+                hits = _gather_hits(kb_ids, vec, settings["top_k"], settings["score_threshold"], settings)
                 if not hits:
                     answer = chat.REFUSAL_TEXT
                     yield _sse({"delta": answer})
@@ -260,14 +349,14 @@ def create_app():
         question = (data.get("question") or "").strip()
         if not question:
             return jsonify({"ok": False, "error": "问题不能为空"}), 400
-        kb_scope = data.get("kb_id") or "all"
+        kb_ids = _parse_kb_ids(data)
         top_k = int(data.get("top_k") or 8)
         threshold = float(data.get("threshold") if data.get("threshold") is not None else 0.0)
         settings = load_settings()
         try:
             client = make_client(settings)
             vec = search.query_vector(client, question, settings["embed_model"])
-            hits = _gather_hits(kb_scope, vec, top_k, threshold, settings)
+            hits = _gather_hits(kb_ids, vec, top_k, threshold, settings)
             return jsonify({"ok": True, "hits": hits})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500

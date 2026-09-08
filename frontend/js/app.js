@@ -5,7 +5,7 @@ const App = {
     kbs: [],
     settings: {},
     convId: null,
-    kbScope: "all",
+    kbIds: ["all"],    // 当前知识库选择（id 列表；["all"]=全部），可单选/多选
     streaming: false,
     pendingFiles: [],   // 新建知识库时选择的文件
     pendingFolder: null,
@@ -73,11 +73,14 @@ async function initApp() {
   }
 
   App.state.settings = await API.get("/api/settings");
+  initTheme();
   await refreshKbs();
   await initChat();
   bindSettingsView();
   bindDebugView();
   bindKbModal();
+  bindOcrModal();
+  bindOcrPdfModal();
 
   $("btn-open-settings").addEventListener("click", () => openSettings());
   $("btn-back-chat").addEventListener("click", () => showView("chat"));

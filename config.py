@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "实验室助手"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # 代码目录（打包后是程序目录，开发时是 app 目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +51,8 @@ DEFAULT_SETTINGS = {
     "temperature": 0,          # 防幻觉：固定为 0，设置页展示但不可改
     "top_k": 6,                # 检索条数
     "score_threshold": 0.3,    # 相似度阈值，低于则视为未命中
+    "ocr_model": "qwen3-vl-plus",  # OCR 多模态模型（手写/公式优先；印刷体可换 qwen-vl-ocr-latest 更省）
+    "theme": "auto",           # 外观主题：auto / light / dark
     "first_run": True,         # 首次启动向导
 }
 

@@ -4,7 +4,7 @@ async function refreshKbs() {
   const r = await API.get("/api/kbs");
   App.state.kbs = r.kbs || [];
   renderKbList();
-  refreshKbSelect();
+  refreshKbPicker();
   const busy = App.state.kbs.find(k => k.ingest && k.ingest.running);
   if (busy) pollIngest(busy.id);
 }
@@ -14,7 +14,8 @@ function renderKbList() {
   ul.innerHTML = "";
   for (const k of App.state.kbs) {
     const li = document.createElement("li");
-    li.className = "kb-item" + (App.state.kbScope === k.id ? " active" : "");
+    const isActive = App.state.kbIds.length === 1 && App.state.kbIds[0] === k.id;
+    li.className = "kb-item" + (isActive ? " active" : "");
     const busy = k.ingest && k.ingest.running;
     const dot = busy ? "busy" : (k.indexed ? "ok" : "bad");
     li.innerHTML = `
@@ -24,7 +25,7 @@ function renderKbList() {
       <span class="kb-actions">
         <button data-act="add" title="添加文件">＋</button>
         <button data-act="ingest" title="重建索引">⟳</button>
-        ${k.builtin ? "" : `<button data-act="rename" title="重命名">✎</button><button data-act="del" title="删除">🗑</button>`}
+        ${k.builtin ? "" : `<button data-act="ocr" title="整本 OCR（扫描版 PDF）">📑</button><button data-act="rename" title="重命名">✎</button><button data-act="del" title="删除">🗑</button>`}
       </span>`;
     li.querySelector(".kb-name").addEventListener("click", () => switchKb(k.id));
     li.querySelectorAll(".kb-actions button").forEach(b => {
@@ -38,13 +39,20 @@ function renderKbList() {
     }
     ul.appendChild(li);
   }
+  // 空状态引导：只有内置库时，提示自建课程库
+  if (App.state.kbs.length <= 1) {
+    const hint = document.createElement("li");
+    hint.className = "kb-hint";
+    hint.textContent = "＋ 新建你的课程知识库，开始积累资料";
+    hint.addEventListener("click", () => $("btn-new-kb").click());
+    ul.appendChild(hint);
+  }
 }
 
 async function switchKb(kbId) {
-  App.state.kbScope = kbId;
-  const sel = $("chat-kb-select");
-  sel.value = kbId;
-  $("chat-title").textContent = (App.state.kbs.find(k => k.id === kbId) || {}).name || "问答";
+  // 侧边栏点库名 = 单选该库（多选用聊天头部选择器）
+  App.state.kbIds = [kbId];
+  refreshKbPicker();
   renderKbList();
   await newConversation();
 }
@@ -67,6 +75,8 @@ async function kbAction(k, act, li) {
     else toast("删除失败：" + (r.error || ""));
   } else if (act === "add") {
     await addFilesToKb(k.id);
+  } else if (act === "ocr") {
+    openOcrPdfModal(k);
   }
 }
 
@@ -168,4 +178,85 @@ async function addFilesToKb(kbId) {
       resolve();
     });
   });
+}
+
+/* ---------- 整本 OCR（扫描版 PDF） ---------- */
+
+let pollOcrTimer = null;
+
+function bindOcrPdfModal() {
+  $("btn-ocr-pdf-cancel").addEventListener("click", () => $("modal-ocr-pdf").classList.add("hidden"));
+}
+
+async function openOcrPdfModal(k) {
+  $("modal-ocr-pdf").dataset.kbId = k.id;
+  $("ocr-pdf-progress").classList.add("hidden");
+  await renderOcrPdfList(k.id);
+  $("modal-ocr-pdf").classList.remove("hidden");
+}
+
+async function renderOcrPdfList(kbId) {
+  const box = $("ocr-pdf-list");
+  const k = App.state.kbs.find(x => x.id === kbId) || {};
+  const ocrRunning = k.ocr && k.ocr.running;
+  const r = await API.get(`/api/kbs/${kbId}/docs`);
+  const pdfs = (r.docs || []).filter(d => d.rel.toLowerCase().endsWith(".pdf"));
+  if (!pdfs.length) {
+    box.innerHTML = `<div class="info-box">该知识库中没有 PDF 文件。先把扫描版 PDF 上传进知识库，再来这里识别。</div>`;
+    return;
+  }
+  box.innerHTML = pdfs.map(d => `
+    <div class="ocr-pdf-item">
+      <span class="ocr-pdf-name" title="${escapeHtml(d.rel)}">${escapeHtml(d.rel)}</span>
+      <span class="hint">${(d.size / 1048576).toFixed(2)} MB · ${escapeHtml(d.mtime)}</span>
+      <button class="btn btn-primary" data-rel="${escapeHtml(d.rel)}" ${ocrRunning ? "disabled" : ""}>${ocrRunning ? "识别中…" : "开始识别"}</button>
+    </div>`).join("");
+  box.querySelectorAll("button[data-rel]").forEach(b => {
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.textContent = "启动中…";
+      const r2 = await API.post(`/api/kbs/${kbId}/ocr-pdf`, { rel: b.dataset.rel });
+      if (r2.ok) {
+        $("ocr-pdf-progress").classList.remove("hidden");
+        $("ocr-pdf-bar").style.width = "0%";
+        $("ocr-pdf-msg").textContent = "OCR 已启动…";
+        pollPdfOcr(kbId);
+      } else {
+        b.disabled = false;
+        b.textContent = "开始识别";
+        toast("启动失败：" + (r2.error || ""), 5000);
+      }
+    });
+  });
+}
+
+function pollPdfOcr(kbId) {
+  clearInterval(pollOcrTimer);
+  pollOcrTimer = setInterval(async () => {
+    const r = await API.get("/api/kbs");
+    const k = (r.kbs || []).find(x => x.id === kbId);
+    if (!k) { clearInterval(pollOcrTimer); return; }
+    const ocrSt = k.ocr || {};
+    const ing = k.ingest || {};
+    const bar = $("ocr-pdf-bar");
+    const msg = $("ocr-pdf-msg");
+    if (ocrSt.running) {
+      if (bar) bar.style.width = (ocrSt.pct || 0) + "%";
+      if (msg) msg.textContent = `${ocrSt.message || "识别中"}（${ocrSt.current || ""}）`;
+      return;
+    }
+    clearInterval(pollOcrTimer);
+    if (ocrSt.error) {
+      toast(`整本 OCR 失败：${ocrSt.error}`, 6000);
+    } else if (ing.running) {
+      if (msg) msg.textContent = "识别完成，正在建立索引…";
+      pollIngest(kbId);
+    } else {
+      if (bar) bar.style.width = "100%";
+      if (msg) msg.textContent = "OCR 完成";
+      toast("整本 OCR 完成，已加入索引");
+    }
+    refreshKbs();
+    renderOcrPdfList(kbId);
+  }, 1500);
 }

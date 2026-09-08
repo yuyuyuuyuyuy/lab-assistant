@@ -7,12 +7,18 @@
 ## ✨ 功能特性
 
 - **知识库问答**：内置 QC 检验知识库框架 + 自建课程知识库（支持 txt / pdf / docx）
-- **引用原文对照**：每个结论后带引用编号 [n]，点击展开原文段落与出处（文件名、分类、相似度）
+- **知识库任意组合**：单个 / 多个 / 全部知识库任选参与问答，引用标注所属库
+- **引用原文对照**：每个结论后带引用编号 [n]，点击徽章自动定位到引用列表并展开原文（支持全部展开/收起，OCR 入库内容标注页码）
+- **拍照识字 OCR**：手写笔记/课本照片 → 云端多模态识别（qwen-vl）→ 逐张校对修改 → 一键入库问答
+- **整本 OCR**：扫描版 PDF（无文字层）逐页识别入库，问答引用标注「第N页」
 - **多轮追问**：结合上下文理解"它""该法"等指代（追问自动改写为完整查询）
 - **防幻觉设计**：只依据检索资料回答，查不到明确说"资料中未找到相关内容"（零命中时不调用大模型）
 - **笔记导出**：一键把当前对话 + 引用原文导出为 Markdown / Word，方便写实验报告
+- **回答快捷操作**：复制全文 / 停止生成 / 重新生成
+- **会话历史**：查看、继续、删除过往对话
+- **外观主题**：浅色 / 深色 / 跟随系统
 - **召回调试**：内置检索调试视图（查看命中片段与相似度分数，排查"资料里有却答不出"）
-- **多知识库管理**：按课程建库、增量索引（文件哈希跳过未变化文件）、"全部"模式跨库检索
+- **多知识库管理**：按课程建库、增量索引（文件哈希跳过未变化文件）
 - **数据全本地**：文档、索引、对话历史全部保存在本机；无服务器、无云存储
 
 ## 🚀 快速开始（Windows 开发运行）
@@ -63,20 +69,20 @@ build\build_win.bat   # 生成 dist\LabAssistant\（onedir 模式），压缩成
 | 后端 | Python + Flask（本地线程，无外部服务） |
 | 前端 | 原生 HTML/CSS/JS 单页（无构建工具、无 CDN） |
 | 向量存储 | sqlite-vec（单文件，含块/向量/哈希表） |
-| 大模型 | 阿里云百炼 qwen-plus（对话）+ text-embedding-v4（向量化），OpenAI 兼容协议 |
-| 文档解析 | PyMuPDF / python-docx / charset-normalizer |
+| 大模型 | 阿里云百炼 qwen-plus（对话）+ text-embedding-v4（向量化）+ qwen3-vl（OCR），OpenAI 兼容协议 |
+| 文档解析 | PyMuPDF / python-docx / charset-normalizer / Pillow（图片预处理） |
 | 打包 | PyInstaller onedir |
 
 ```
 app/
 ├── main.py            # 入口：Flask 线程 + 桌面窗口
 ├── config.py          # 路径与默认设置
-├── backend/           # server(路由) chat(编排) search ingest kb store
+├── backend/           # server(路由) chat(编排) search ingest kb store ocr(图片识别)
 │                      # embeddings parser vector_store export
 ├── prompts/           # 防幻觉系统提示词
 ├── frontend/          # 纯静态前端
 ├── res/               # 图标 + 内置语料目录
-├── tests/             # 20 题验收问题集与测试脚本
+├── tests/             # 验收问题集与测试脚本
 └── build/             # PyInstaller 打包配置
 ```
 

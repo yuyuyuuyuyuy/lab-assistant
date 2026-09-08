@@ -3,6 +3,7 @@
 
 索引进度存在内存 INGEST_STATUS（单机单用户应用，够用）。
 """
+import json
 import os
 import shutil
 import threading
@@ -10,10 +11,12 @@ import time
 import uuid
 
 import config
-from . import ingest, store
+from . import ingest, ocr, parser, store
+from .embeddings import make_client
 from .vector_store import VectorStore
 
 INGEST_STATUS = {}  # kb_id -> {running, pct, message, error, stats}
+OCR_STATUS = {}     # kb_id -> {running, pct, message, current, error}（扫描版 PDF 整本 OCR）
 
 
 def ensure_data_dirs():
@@ -140,3 +143,105 @@ def start_ingest(kb_id, settings):
 
 def get_ingest_status(kb_id):
     return INGEST_STATUS.get(kb_id)
+
+
+def get_ocr_status(kb_id):
+    return OCR_STATUS.get(kb_id)
+
+
+def start_pdf_ocr(kb_id, rel, settings):
+    """后台线程整本 OCR：逐页渲染 → 并发识别 → 写 sidecar → 重建索引。
+
+    rel 为 docs 目录内的相对路径（如 「讲义.pdf」）。结果写到「讲义.pdf.ocr.json」，
+    增量索引会自动发现并按其分页文本建块（原 pdf 跳过直接解析）。
+    """
+    p = kb_paths(kb_id)
+    abs_path = os.path.normpath(os.path.join(p["docs"], rel))
+    if not os.path.isfile(abs_path) or not rel.lower().endswith(".pdf"):
+        raise ValueError("文件不存在（仅支持知识库内的 PDF）")
+    if OCR_STATUS.get(kb_id, {}).get("running"):
+        raise ValueError("该知识库已有 OCR 任务进行中，请稍候")
+
+    import pymupdf
+
+    doc = pymupdf.open(abs_path)
+    try:
+        total = len(doc)
+    finally:
+        doc.close()
+    if total <= 0:
+        raise ValueError("PDF 没有页面")
+    if total > config.MAX_PDF_PAGES:
+        raise ValueError(f"页数过多（{total} 页，上限 {config.MAX_PDF_PAGES} 页）")
+
+    def work():
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            client = make_client(settings)
+            model = settings["ocr_model"]
+            doc = pymupdf.open(abs_path)
+
+            def do_page(pageno):
+                page = doc[pageno]
+                pix = page.get_pixmap(dpi=150)
+                uri = ocr.preprocess_image(pix.tobytes("png"))
+                if uri is None:
+                    raise RuntimeError("页面渲染失败")
+                last = None
+                for attempt in range(3):
+                    try:
+                        text = ocr.recognize_image(client, model, uri)
+                        return {"page": pageno + 1, "text": text}
+                    except Exception as e:
+                        last = e
+                        time.sleep(1.5 * (attempt + 1))
+                raise RuntimeError(f"识别失败：{last}")
+
+            try:
+                results = {}
+                with ThreadPoolExecutor(max_workers=2) as ex:
+                    futs = {ex.submit(do_page, i): i for i in range(total)}
+                    done = 0
+                    for fut in as_completed(futs):
+                        i = futs[fut]
+                        try:
+                            results[i] = fut.result()
+                        except Exception as e:
+                            results[i] = {"page": i + 1, "text": "", "error": str(e)}
+                        done += 1
+                        OCR_STATUS[kb_id] = {
+                            "running": True, "pct": int(60 * done / total),
+                            "message": f"识别中 {done}/{total} 页",
+                            "current": rel, "error": None, "updated_at": time.time(),
+                        }
+            finally:
+                doc.close()
+
+            pages_list = [results[i] for i in range(total)]
+            sidecar = abs_path + parser.OCR_SIDECAR_EXT
+            tmp = sidecar + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"file": os.path.basename(rel), "pages": pages_list}, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, sidecar)
+
+            OCR_STATUS[kb_id] = {
+                "running": True, "pct": 90, "message": "识别完成，正在建立索引",
+                "current": rel, "error": None, "updated_at": time.time(),
+            }
+            start_ingest(kb_id, settings)
+            OCR_STATUS[kb_id] = {
+                "running": False, "pct": 100, "message": "OCR 完成",
+                "current": rel, "error": None, "updated_at": time.time(),
+            }
+        except Exception as e:
+            OCR_STATUS[kb_id] = {
+                "running": False, "pct": 0, "message": "OCR 失败",
+                "current": rel, "error": str(e), "updated_at": time.time(),
+            }
+
+    OCR_STATUS[kb_id] = {
+        "running": True, "pct": 0, "message": "准备中",
+        "current": rel, "error": None, "updated_at": time.time(),
+    }
+    threading.Thread(target=work, daemon=True).start()
