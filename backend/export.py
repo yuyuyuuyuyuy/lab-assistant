@@ -43,6 +43,19 @@ def export_conversation(conv, messages, fmt="md", out_path=None):
     return out_path
 
 
+def export_note_text(title, content, fmt="md", out_path=None):
+    """单篇知识笔记导出（Markdown / Word），复用对话导出的写入逻辑。"""
+    ext = ".docx" if fmt == "docx" else ".md"
+    if out_path is None:
+        out_path = os.path.join(_default_dir(), _safe_name(title) + ext)
+    sections = [{"role": "note", "content": content, "citations": []}]
+    if fmt == "docx":
+        _write_docx(title, sections, out_path)
+    else:
+        _write_markdown(title, sections, out_path)
+    return out_path
+
+
 # ---------- Markdown ----------
 
 def _write_markdown(title, sections, out_path):
@@ -50,6 +63,8 @@ def _write_markdown(title, sections, out_path):
     for i, s in enumerate(sections, 1):
         if s["role"] == "user":
             lines.append(f"## 问题 {i}：{s['content']}")
+        elif s["role"] == "note":
+            lines.append(s["content"])  # 知识笔记：正文本身就是完整 Markdown 文档
         else:
             lines.append(f"### 回答 {i}")
             lines.append("")
@@ -81,6 +96,17 @@ def _write_docx(title, sections, out_path):
     for i, s in enumerate(sections, 1):
         if s["role"] == "user":
             doc.add_heading(f"问题 {i}：{s['content']}", level=1)
+        elif s["role"] == "note":
+            # 知识笔记：按行写入，以 # 开头的行转标题层级
+            for line in s["content"].splitlines():
+                if line.startswith("### "):
+                    doc.add_heading(line[4:], level=3)
+                elif line.startswith("## "):
+                    doc.add_heading(line[3:], level=2)
+                elif line.startswith("# "):
+                    doc.add_heading(line[2:], level=1)
+                else:
+                    doc.add_paragraph(line)
         else:
             doc.add_heading(f"回答 {i}", level=2)
             doc.add_paragraph(s["content"])

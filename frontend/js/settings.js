@@ -30,23 +30,8 @@ function bindSettingsView() {
 
   $("btn-save-settings").addEventListener("click", saveSettings);
 
-  // 向导
-  $("btn-wiz-save").addEventListener("click", async () => {
-    const key = $("wiz-api-key").value.trim();
-    if (key) {
-      const r = await API.post("/api/settings", { api_key: key });
-      if (!r.ok) return toast("保存失败，请重试", 5000);
-      App.state.settings = r.settings;
-    }
-    await API.post("/api/settings", {});
-    $("modal-wizard").classList.add("hidden");
-    toast("欢迎使用！先试试内置知识库里的问题吧");
-  });
-  $("btn-wiz-skip").addEventListener("click", async () => {
-    await API.post("/api/settings", {});
-    $("modal-wizard").classList.add("hidden");
-    toast("已使用内置 Key，可在设置中随时更换");
-  });
+  // 重新查看使用引导（分步向导逻辑见 wizard.js）
+  $("btn-reopen-wizard").addEventListener("click", openWizard);
 }
 
 function openSettings() {

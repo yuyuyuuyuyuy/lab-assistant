@@ -16,6 +16,28 @@ def load_system_prompt():
         return "你是「实验室助手」。只能依据【参考资料】回答，每个结论后紧跟引用编号 [n]，查不到就说“资料中未找到相关内容”。"
 
 
+def generate_note(client, settings, keyword, hits):
+    """关键词 → 结构化知识笔记（非流式，整理耗时较长属正常）。
+
+    复用 build_user_content 拼装参考资料（含防幻觉提示），系统提示词换成笔记模板。
+    """
+    try:
+        with open(config.NOTE_PROMPT_PATH, encoding="utf-8") as f:
+            system = f.read().strip()
+    except Exception:
+        system = "把用户关键词整理成结构化知识笔记，只依据参考资料，每个结论带引用编号 [n]。"
+    resp = client.chat.completions.create(
+        model=settings["llm_model"],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": build_user_content(keyword, hits, [])},
+        ],
+        temperature=0,
+        max_tokens=2500,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
 def build_user_content(question, hits, history):
     """拼装用户消息：对话历史（仅助指代）+ 参考资料（编号）+ 问题。"""
     parts = []

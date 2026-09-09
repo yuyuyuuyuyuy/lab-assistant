@@ -107,11 +107,92 @@ def parse_docx(path):
     return split_paragraphs("\n\n".join(paras))
 
 
-SUPPORTED_EXTS = {".txt": parse_txt, ".pdf": parse_pdf, ".docx": parse_docx}
+def parse_pptx(path, image_min_chars=10):
+    """解析 PPT（.pptx）：提取每页文本层（正文/表格/备注/图表数据），
+    返回 [(text, page, images)]，page 从 1 开始。
+
+    图片型页（文本不足 image_min_chars）附上该页内嵌图片 blob，供调用方
+    送 OCR 兜底；文本足够的页 images 为空列表（零 API 费用）。
+    """
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    def shape_texts(shape):
+        """递归提取单个形状的文本：组 / 表格 / 图表 / 文本框。"""
+        texts = []
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for sub in shape.shapes:
+                texts.extend(shape_texts(sub))
+            return texts
+        if getattr(shape, "has_table", False) and shape.has_table:
+            for row in shape.table.rows:
+                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                if cells:
+                    texts.append("｜".join(cells))
+            return texts
+        if getattr(shape, "has_chart", False) and shape.has_chart:
+            try:
+                bits = []
+                for plot in shape.chart.plots:
+                    try:
+                        bits.append("、".join(str(c) for c in plot.categories))
+                    except Exception:
+                        pass
+                    for series in plot.series:
+                        try:
+                            bits.append("、".join(str(v) for v in series.values))
+                        except Exception:
+                            pass
+                if bits:
+                    texts.append("图表数据：" + "；".join(bits))
+            except Exception:
+                pass
+        if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
+            t = shape.text_frame.text.strip()
+            if t:
+                texts.append(t)
+        return texts
+
+    def collect_images(shape):
+        """递归收集形状内嵌图片的原始字节（含组内图片）。"""
+        imgs = []
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for sub in shape.shapes:
+                imgs.extend(collect_images(sub))
+        elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            try:
+                imgs.append(shape.image.blob)
+            except Exception:
+                pass
+        return imgs
+
+    prs = Presentation(path)
+    out = []
+    for idx, slide in enumerate(prs.slides, 1):
+        texts = []
+        for shape in slide.shapes:
+            texts.extend(shape_texts(shape))
+        if slide.has_notes_slide:  # 备注往往是老师讲稿要点，并入页尾
+            note = slide.notes_slide.notes_text_frame.text.strip()
+            if note:
+                texts.append(note)
+        text = "\n".join(texts).strip()
+        images = []
+        if len(text) < image_min_chars:
+            for shape in slide.shapes:
+                images.extend(collect_images(shape))
+        out.append((text, idx, images))
+    return out
+
+
+SUPPORTED_EXTS = {".txt": parse_txt, ".pdf": parse_pdf, ".docx": parse_docx, ".pptx": parse_pptx}
 
 
 def parse_file(path):
     ext = os.path.splitext(path)[1].lower()
     if ext not in SUPPORTED_EXTS:
-        raise ValueError(f"不支持的文件格式 {ext}（仅支持 txt / pdf / docx）")
+        raise ValueError(f"不支持的文件格式 {ext}（仅支持 txt / pdf / docx / pptx）")
+    if ext == ".pptx":
+        # 泛化路径的兜底：丢弃页码与图片（图片页 OCR 由 ingest 的 pptx 专用分支处理）
+        return [t for t, _p, _i in parse_pptx(path) if t]
     return SUPPORTED_EXTS[ext](path)

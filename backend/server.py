@@ -2,13 +2,12 @@
 """Flask 后端：静态前端 + /api 路由（薄壳，逻辑都在 backend 各模块）。"""
 import json
 import os
-import re
 
 import flask
 from flask import Flask, Response, jsonify, request
 
 import config
-from . import chat, export, kb as kb_mod, ocr, search, store
+from . import chat, export, kb as kb_mod, ocr, parser, search, store
 from .embeddings import make_client
 
 # ---------------- 设置 ----------------
@@ -102,6 +101,8 @@ def create_app():
         for k in ("llm_model", "embed_model", "top_k", "score_threshold", "ocr_model", "theme"):
             if k in data:
                 s[k] = data[k]
+        if data.get("onboarding_done") is not None:
+            s["onboarding_done"] = bool(data["onboarding_done"])
         s["first_run"] = False
         save_settings(s)
         return jsonify({"ok": True, "settings": settings_public(s)})
@@ -180,7 +181,7 @@ def create_app():
             if not f.filename:
                 continue
             ext = os.path.splitext(f.filename)[1].lower()
-            if ext not in (".txt", ".pdf", ".docx"):
+            if ext not in parser.SUPPORTED_EXTS:
                 continue
             f.save(os.path.join(docs_dir, os.path.basename(f.filename)))
             imported += 1
@@ -246,20 +247,9 @@ def create_app():
         name = (data.get("name") or "").strip() or "OCR笔记"
         if not text:
             return jsonify({"ok": False, "error": "识别文本为空"}), 400
-        safe = re.sub(r'[\\/:*?"<>|\r\n]', "_", name)
-        if safe.lower().endswith(".txt"):
-            safe = safe[:-4]
-        docs_dir = kb_mod.kb_paths(kb_id)["docs"]
-        os.makedirs(docs_dir, exist_ok=True)
-        path = os.path.join(docs_dir, safe + ".txt")
-        n = 2
-        while os.path.exists(path):
-            path = os.path.join(docs_dir, f"{safe}({n}).txt")
-            n += 1
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+        fname = kb_mod.save_text_doc(kb_id, name, text)
         kb_mod.start_ingest(kb_id, load_settings())
-        return jsonify({"ok": True, "file": os.path.basename(path)})
+        return jsonify({"ok": True, "file": fname})
 
     # ---- 对话 ----
     @app.get("/api/conversations")
@@ -360,6 +350,80 @@ def create_app():
             return jsonify({"ok": True, "hits": hits})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
+
+    # ---- 知识笔记（三期：关键词 → 结构化笔记） ----
+    @app.post("/api/notes/generate")
+    def generate_note():
+        data = request.get_json(force=True) or {}
+        keyword = (data.get("keyword") or "").strip()
+        if not keyword:
+            return jsonify({"ok": False, "error": "关键词不能为空"}), 400
+        kb_ids = _parse_kb_ids(data)
+        settings = load_settings()
+        try:
+            client = make_client(settings)
+            vec = search.query_vector(client, keyword, settings["embed_model"])
+            # 笔记场景只加大检索条数；阈值保持用户设置（0.3 是验证过的拒答线，
+            # 放宽会漏进无关文本、白白调 LLM——实测 0.25 时无关关键词命中 16 条）
+            hits = _gather_hits(kb_ids, vec, 16, float(settings["score_threshold"]), settings)
+            if not hits:
+                return jsonify({"ok": True, "empty": True,
+                                "message": f"所选知识库中未找到「{keyword}」相关内容。"})
+            note = chat.generate_note(client, settings, keyword, hits)
+            citations = chat.extract_citations(note, hits)
+            return jsonify({"ok": True, "note": note, "citations": citations, "hits_count": len(hits)})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/api/notes")
+    def list_notes():
+        return jsonify({"notes": store.list_notes()})
+
+    @app.post("/api/notes/save")
+    def save_note():
+        data = request.get_json(force=True) or {}
+        content = (data.get("content") or "").strip()
+        keyword = (data.get("keyword") or "").strip() or "未命名"
+        if not content:
+            return jsonify({"ok": False, "error": "笔记内容为空"}), 400
+        nid = store.save_note(keyword, _parse_kb_ids(data), content)
+        return jsonify({"ok": True, "id": nid})
+
+    @app.delete("/api/notes/<int:note_id>")
+    def delete_note(note_id):
+        store.delete_note(note_id)
+        return jsonify({"ok": True})
+
+    @app.post("/api/notes/export")
+    def export_note_text():
+        data = request.get_json(force=True) or {}
+        title = (data.get("title") or "知识笔记").strip()
+        content = (data.get("content") or "").strip()
+        fmt = data.get("format") if data.get("format") in ("md", "docx") else "md"
+        if not content:
+            return jsonify({"ok": False, "error": "笔记内容为空"}), 400
+        try:
+            path = export.export_note_text(title, content, fmt)
+            return jsonify({"ok": True, "path": path})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/api/kbs/<kb_id>/note-save")
+    def note_to_kb(kb_id):
+        """把整理好的知识笔记存为 txt 加入自建知识库（参与问答）。"""
+        row = store.get_kb(kb_id)
+        if row is None:
+            return jsonify({"ok": False, "error": "知识库不存在"}), 404
+        if row["builtin"]:
+            return jsonify({"ok": False, "error": "内置知识库不可修改"}), 400
+        data = request.get_json(force=True) or {}
+        text = (data.get("text") or "").strip()
+        name = (data.get("name") or "").strip() or "知识笔记"
+        if not text:
+            return jsonify({"ok": False, "error": "笔记内容为空"}), 400
+        fname = kb_mod.save_text_doc(kb_id, name, text)
+        kb_mod.start_ingest(kb_id, load_settings())
+        return jsonify({"ok": True, "file": fname})
 
     # ---- 笔记导出 ----
     @app.post("/api/export")

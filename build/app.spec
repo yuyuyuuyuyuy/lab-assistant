@@ -9,7 +9,7 @@ APP_ROOT = os.path.dirname(os.path.abspath(SPECPATH))
 
 datas, binaries, hiddenimports = [], [], []
 # 有原生扩展/资源文件的包：整包收集（sqlite-vec 带 vec0.dll、webview 带 js 资源等）
-for pkg in ("sqlite_vec", "webview", "pythonnet", "clr_loader", "pymupdf", "charset_normalizer", "PIL"):
+for pkg in ("sqlite_vec", "webview", "pythonnet", "clr_loader", "pymupdf", "charset_normalizer", "PIL", "pptx"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

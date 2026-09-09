@@ -6,8 +6,10 @@
 """
 import hashlib
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import parser, vector_store
+from . import ocr, parser, vector_store
 from .embeddings import embed, make_client
 
 
@@ -101,6 +103,69 @@ def build_index(index_path, docs_dir, kb_name, settings, progress_cb=None):
                             metas.append(dict(meta_base, page=page))
                     if not chunks:
                         raise ValueError("OCR 结果为空")
+                    vectors = embed(client, chunks, settings["embed_model"])
+                    items = [
+                        (new.max_id() + 1 + k, rel, text, vec, dict(meta, chunk=k))
+                        for k, (text, vec, meta) in enumerate(zip(chunks, vectors, metas))
+                    ]
+                    new.add(items)
+                    new.set_file(rel, md5, len(chunks))
+                    stats["new"] += 1
+                    stats["chunks"] += len(chunks)
+                elif rel.lower().endswith(".pptx"):
+                    # PPT：文本层零费用直接入库；图片型页提取页内图片并发 OCR 兜底
+                    meta_base = _meta_from_rel(rel, kb_name)
+                    pages = parser.parse_pptx(abs_path)
+                    ocr_needed = [(page, imgs) for _text, page, imgs in pages if imgs]
+                    ocr_texts = {}
+                    if ocr_needed:
+                        def ocr_page(page, imgs):
+                            texts = []
+                            for b in imgs:
+                                uri = ocr.preprocess_image(b)
+                                if uri is None:
+                                    continue  # 无法解析的图片格式（如 EMF），跳过
+                                last = None
+                                for attempt in range(2):
+                                    try:
+                                        texts.append(ocr.recognize_image(client, settings["ocr_model"], uri))
+                                        last = None
+                                        break
+                                    except Exception as e:
+                                        last = e
+                                        time.sleep(1.5 * (attempt + 1))
+                                if last is not None:
+                                    raise RuntimeError(f"识别失败：{last}")
+                            return page, "\n".join(texts)
+
+                        with ThreadPoolExecutor(max_workers=2) as ex:
+                            futs = {ex.submit(ocr_page, p, imgs): p for p, imgs in ocr_needed}
+                            done = 0
+                            for fut in as_completed(futs):
+                                p = futs[fut]
+                                try:
+                                    ocr_texts[p] = fut.result()[1]
+                                except Exception as e:
+                                    # 降级：该页保持文本层内容，不阻塞入库
+                                    stats.setdefault("ocr_skipped", []).append(f"第{p}页：{e}")
+                                done += 1
+                                progress_cb(pct, f"正在识别 {rel} 图片页 {done}/{len(ocr_needed)}")
+                    chunks, metas = [], []
+                    for text, page, _imgs in pages:
+                        full = text
+                        if ocr_texts.get(page):
+                            full = (full + "\n" if full else "") + ocr_texts[page]
+                        if not full.strip():
+                            continue  # 完全空页（无文本且 OCR 失败/无图片）
+                        if len(full) <= 800:
+                            chunks.append(full)
+                            metas.append(dict(meta_base, page=page))
+                        else:
+                            for c in parser.split_paragraphs(full):
+                                chunks.append(c)
+                                metas.append(dict(meta_base, page=page))
+                    if not chunks:
+                        raise ValueError("未解析出任何文字内容（图片页识别失败或页面为空）")
                     vectors = embed(client, chunks, settings["embed_model"])
                     items = [
                         (new.max_id() + 1 + k, rel, text, vec, dict(meta, chunk=k))

@@ -81,13 +81,15 @@ async function initApp() {
   bindKbModal();
   bindOcrModal();
   bindOcrPdfModal();
+  bindNoteModals();
+  bindWizard();
 
   $("btn-open-settings").addEventListener("click", () => openSettings());
   $("btn-back-chat").addEventListener("click", () => showView("chat"));
 
-  // 首次启动向导
-  if (App.state.settings.first_run) {
-    $("modal-wizard").classList.remove("hidden");
+  // 首次使用引导：完成/跳过后 onboarding_done 置位，不再出现（设置页可重新查看）
+  if (!App.state.settings.onboarding_done) {
+    openWizard();
   } else {
     showView("chat");
   }

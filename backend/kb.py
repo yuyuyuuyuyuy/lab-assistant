@@ -96,7 +96,7 @@ def import_files(kb_id, src_paths):
         if not os.path.isfile(src):
             continue
         ext = os.path.splitext(src)[1].lower()
-        if ext not in (".txt", ".pdf", ".docx"):
+        if ext not in parser.SUPPORTED_EXTS:
             continue
         dst = os.path.join(docs_dir, os.path.basename(src))
         shutil.copy2(src, dst)
@@ -109,8 +109,30 @@ def import_folder(kb_id, folder):
     files = [os.path.join(root, name)
              for root, _dirs, names in os.walk(folder)
              for name in names
-             if os.path.splitext(name)[1].lower() in (".txt", ".pdf", ".docx")]
+             if os.path.splitext(name)[1].lower() in parser.SUPPORTED_EXTS]
     return import_files(kb_id, files)
+
+
+def save_text_doc(kb_id, name, text):
+    """把一段文本存为知识库内的 txt 文档（OCR 校对保存、知识笔记入库共用），返回文件名。
+
+    文件名清洗非法字符，同名自动加序号，永不覆盖已有文档。
+    """
+    import re
+
+    safe = re.sub(r'[\\/:*?"<>|\r\n]', "_", (name or "未命名").strip()) or "未命名"
+    if safe.lower().endswith(".txt"):
+        safe = safe[:-4]
+    docs_dir = kb_paths(kb_id)["docs"]
+    os.makedirs(docs_dir, exist_ok=True)
+    path = os.path.join(docs_dir, safe + ".txt")
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(docs_dir, f"{safe}({n}).txt")
+        n += 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return os.path.basename(path)
 
 
 def start_ingest(kb_id, settings):

@@ -25,6 +25,9 @@ def init_db():
             role TEXT, content TEXT, citations TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS kbs(
             id TEXT PRIMARY KEY, name TEXT, builtin INTEGER DEFAULT 0, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS notes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT,
+            kb_ids TEXT, content TEXT, created_at TEXT);
         """
     )
     db.commit()
@@ -191,5 +194,42 @@ def rename_kb(kb_id, name):
 def delete_kb_row(kb_id):
     db = _connect()
     db.execute("DELETE FROM kbs WHERE id=?", (kb_id,))
+    db.commit()
+    db.close()
+
+
+# ---------- 知识笔记（三期） ----------
+
+def save_note(keyword, kb_ids, content):
+    """保存一篇整理好的知识笔记，返回笔记 id。"""
+    db = _connect()
+    cur = db.execute(
+        "INSERT INTO notes(keyword, kb_ids, content, created_at) VALUES (?,?,?,?)",
+        (keyword, json.dumps([str(x) for x in kb_ids], ensure_ascii=False), content, now()),
+    )
+    db.commit()
+    db.close()
+    return cur.lastrowid
+
+
+def list_notes():
+    """全部笔记（含全文，便于直接渲染查看），按创建时间倒序。"""
+    db = _connect()
+    rows = db.execute("SELECT * FROM notes ORDER BY id DESC").fetchall()
+    db.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["kb_ids"] = json.loads(d["kb_ids"] or "[]")
+        except Exception:
+            d["kb_ids"] = []
+        out.append(d)
+    return out
+
+
+def delete_note(note_id):
+    db = _connect()
+    db.execute("DELETE FROM notes WHERE id=?", (note_id,))
     db.commit()
     db.close()

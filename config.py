@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "实验室助手"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # 代码目录（打包后是程序目录，开发时是 app 目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +13,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BUILTIN_DOCS_DIR = os.path.join(BASE_DIR, "res", "builtin_kb", "docs")
 # 防幻觉系统提示词文件
 PROMPT_PATH = os.path.join(BASE_DIR, "prompts", "qa_system.txt")
+# 知识笔记整理提示词文件（三期：关键词 → 结构化笔记）
+NOTE_PROMPT_PATH = os.path.join(BASE_DIR, "prompts", "note_system.txt")
 
 # 用户数据目录：程序目录只放只读内容，一切可变数据放这里
 def _data_dir():
@@ -53,7 +55,8 @@ DEFAULT_SETTINGS = {
     "score_threshold": 0.3,    # 相似度阈值，低于则视为未命中
     "ocr_model": "qwen3-vl-plus",  # OCR 多模态模型（手写/公式优先；印刷体可换 qwen-vl-ocr-latest 更省）
     "theme": "auto",           # 外观主题：auto / light / dark
-    "first_run": True,         # 首次启动向导
+    "first_run": True,         # 首次启动向导（旧版标记，保留兼容）
+    "onboarding_done": False,  # 首次使用引导（分步向导）是否已完成，完成/跳过后不再显示
 }
 
 # 单文件上传限制
