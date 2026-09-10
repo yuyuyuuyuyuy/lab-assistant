@@ -17,3 +17,6 @@ __pycache__/
 # 公开版：内置库语料目录不入库（仅保留 README 占位）
 res/builtin_kb/docs/*
 !res/builtin_kb/docs/README.md
+
+# 评测报告（运行产物，本机留存）
+tests/eval_reports/
