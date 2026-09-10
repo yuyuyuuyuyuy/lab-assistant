@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# 「实验室助手」PyInstaller 打包配置：onedir（文件夹模式，误报率低于 onefile）
+# 「药鉴」PyInstaller 打包配置：onedir（文件夹模式，误报率低于 onefile）
 import os
 
 from PyInstaller.utils.hooks import collect_all
@@ -42,7 +42,7 @@ exe = EXE(
     pyz,
     a.scripts,
     exclude_binaries=True,
-    name="LabAssistant",
+    name="YaoJian",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -57,5 +57,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="LabAssistant",
+    name="YaoJian",
 )

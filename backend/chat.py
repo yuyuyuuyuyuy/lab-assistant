@@ -13,7 +13,7 @@ def load_system_prompt():
         with open(config.PROMPT_PATH, encoding="utf-8") as f:
             return f.read().strip()
     except Exception:
-        return "你是「实验室助手」。只能依据【参考资料】回答，每个结论后紧跟引用编号 [n]，查不到就说“资料中未找到相关内容”。"
+        return "你是「药鉴」。只能依据【参考资料】回答，每个结论后紧跟引用编号 [n]，查不到就说“资料中未找到相关内容”。"
 
 
 def generate_note(client, settings, keyword, hits):

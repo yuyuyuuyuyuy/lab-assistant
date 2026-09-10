@@ -3,7 +3,7 @@
 import os
 import sys
 
-APP_NAME = "实验室助手"
+APP_NAME = "药鉴"
 VERSION = "0.3.0"
 
 # 代码目录（打包后是程序目录，开发时是 app 目录）

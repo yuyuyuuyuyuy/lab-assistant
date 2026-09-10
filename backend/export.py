@@ -59,7 +59,7 @@ def export_note_text(title, content, fmt="md", out_path=None):
 # ---------- Markdown ----------
 
 def _write_markdown(title, sections, out_path):
-    lines = [f"# {title}", "", f"> 导出时间：{time.strftime('%Y-%m-%d %H:%M')}｜由「实验室助手」生成", ""]
+    lines = [f"# {title}", "", f"> 导出时间：{time.strftime('%Y-%m-%d %H:%M')}｜由「药鉴」生成", ""]
     for i, s in enumerate(sections, 1):
         if s["role"] == "user":
             lines.append(f"## 问题 {i}：{s['content']}")
@@ -90,7 +90,7 @@ def _write_docx(title, sections, out_path):
 
     doc = Document()
     doc.add_heading(title, level=0)
-    p = doc.add_paragraph(f"导出时间：{time.strftime('%Y-%m-%d %H:%M')}｜由「实验室助手」生成")
+    p = doc.add_paragraph(f"导出时间：{time.strftime('%Y-%m-%d %H:%M')}｜由「药鉴」生成")
     p.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
     for i, s in enumerate(sections, 1):

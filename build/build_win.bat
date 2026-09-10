@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-title 实验室助手 - Windows 打包脚本
+title 药鉴 - Windows 打包脚本
 echo ============================================
-echo   实验室助手 - 一键打包（Windows）
+echo   药鉴 - 一键打包（Windows）
 echo ============================================
 echo.
 cd /d %~dp0..
@@ -14,8 +14,8 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo [2/2] 打包完成！产物在 dist\LabAssistant\ 目录
-echo   - LabAssistant.exe 双击即可运行
-echo   - 分发给他人时把整个 LabAssistant 文件夹压缩成 zip 即可
+echo [2/2] 打包完成！产物在 dist\YaoJian\ 目录
+echo   - YaoJian.exe 双击即可运行
+echo   - 分发给他人时把整个 YaoJian 文件夹压缩成 zip 即可
 echo.
 pause

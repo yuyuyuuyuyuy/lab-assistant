@@ -151,6 +151,27 @@ def create_app():
     def list_docs(kb_id):
         return jsonify({"docs": kb_mod.list_docs(kb_id)})
 
+    @app.get("/api/kbs/<kb_id>/stats")
+    def kb_stats(kb_id):
+        """语料质量台账：上次索引统计（持久化）+ 每文件块数 + 未进入索引的文件。"""
+        if store.get_kb(kb_id) is None:
+            return jsonify({"ok": False, "error": "知识库不存在"}), 404
+        persisted = kb_mod.load_ingest_stats(kb_id)
+        files = []
+        st = kb_mod.open_store(kb_id)
+        if st is not None:
+            for rel, (md5, n) in st.get_files().items():
+                files.append({"rel": rel, "md5": md5, "chunks": n})
+            st.close()
+        indexed = {f["rel"] for f in files}
+        missing = []
+        for d in kb_mod.list_docs(kb_id):
+            rel = d["rel"]
+            if rel in indexed or rel + parser.OCR_SIDECAR_EXT in indexed:
+                continue  # 扫描版 PDF 由 sidecar 索引，视为已入库
+            missing.append(rel)
+        return jsonify({"ok": True, "ledger": persisted, "files": files, "missing": missing})
+
     @app.post("/api/kbs/<kb_id>/import")
     def import_docs(kb_id):
         data = request.get_json(force=True) or {}

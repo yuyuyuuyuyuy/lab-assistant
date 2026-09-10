@@ -135,6 +135,29 @@ def save_text_doc(kb_id, name, text):
     return os.path.basename(path)
 
 
+def _stats_path(kb_id):
+    """语料统计台账路径（每次索引覆盖更新，重启不丢）。"""
+    return os.path.join(kb_paths(kb_id)["base"], "ingest_stats.json")
+
+
+def load_ingest_stats(kb_id):
+    """读取上次索引的统计台账；从未索引过返回 None。"""
+    try:
+        with open(_stats_path(kb_id), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_ingest_stats(kb_id, payload):
+    """原子写入索引统计（成功统计或失败原因），供设置页「语料统计」展示。"""
+    os.makedirs(kb_paths(kb_id)["base"], exist_ok=True)
+    tmp = _stats_path(kb_id) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, _stats_path(kb_id))
+
+
 def start_ingest(kb_id, settings):
     """后台线程重建索引（增量）。同一库的并发调用自动合并（本轮结束补跑一次）。"""
     p = kb_paths(kb_id)
@@ -162,11 +185,19 @@ def start_ingest(kb_id, settings):
                     "running": False, "pct": 100, "message": "索引完成",
                     "error": None, "stats": stats, "updated_at": time.time(),
                 }
+                save_ingest_stats(kb_id, {
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "kb_name": kb_name, "error": None, "stats": stats,
+                })
             except Exception as e:
                 INGEST_STATUS[kb_id] = {
                     "running": False, "pct": 0, "message": "索引失败",
                     "error": str(e), "stats": None, "updated_at": time.time(),
                 }
+                save_ingest_stats(kb_id, {
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "kb_name": kb_name, "error": str(e), "stats": None,
+                })
         finally:
             lock.release()
             if INGEST_PENDING.pop(kb_id, False):

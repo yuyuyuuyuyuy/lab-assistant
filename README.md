@@ -1,4 +1,4 @@
-# 实验室助手（Lab Assistant）
+# 药鉴（Lab Assistant）
 
 🧪 面向化学、药学类专业大学生的本地知识库问答桌面应用。
 
@@ -58,7 +58,7 @@ venv\Scripts\python main.py
 ## 📦 打包分发
 
 ```bash
-build\build_win.bat   # 生成 dist\LabAssistant\（onedir 模式），压缩成 zip 即可分发
+build\build_win.bat   # 生成 dist\YaoJian\（onedir 模式），压缩成 zip 即可分发
 ```
 
 - Windows 10+ 需系统已装 [Edge WebView2 运行库](https://developer.microsoft.com/microsoft-edge/webview2/)（多数机器已自带）

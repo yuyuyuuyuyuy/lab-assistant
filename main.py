@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「实验室助手」入口：起 Flask 后端线程 + 打开桌面窗口（Windows: Edge WebView2 / macOS: WKWebView）。"""
+"""「药鉴」入口：起 Flask 后端线程 + 打开桌面窗口（Windows: Edge WebView2 / macOS: WKWebView）。"""
 import os
 import socket
 import sys

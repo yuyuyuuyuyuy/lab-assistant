@@ -59,7 +59,7 @@ function renderEmptyState() {
   const box = $("messages");
   box.innerHTML = `
     <div class="empty-state">
-      <h2>🧪 你好，我是实验室助手</h2>
+      <h2>🧪 你好，我是药鉴</h2>
       <p>我能依据知识库资料回答问题，并标注引用来源。点击回答中的 <span class="cite">[1]</span> 徽章，可在回答下方定位并展开原文。</p>
       <div class="empty-chips">
         ${EXAMPLE_CHIPS.map(q => `<button class="chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("")}

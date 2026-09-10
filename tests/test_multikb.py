@@ -48,7 +48,7 @@ def main():
     kb_id = kb_mod.create_kb("多选测试")
     try:
         tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
-        tmp.write("多选测试专属内容：实验室助手二期验收用段落，仅存在于本测试库中。\n")
+        tmp.write("多选测试专属内容：药鉴二期验收用段落，仅存在于本测试库中。\n")
         tmp.close()
         kb_mod.import_files(kb_id, [tmp.name])
         os.unlink(tmp.name)

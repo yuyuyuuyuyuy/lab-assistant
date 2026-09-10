@@ -18,13 +18,14 @@ function initTheme() {
 }
 
 function bindSettingsView() {
-  // 标签切换
+  // 标签切换（基本设置 / 召回调试 / 语料统计）
   document.querySelectorAll(".tab").forEach(t => {
     t.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
       t.classList.add("active");
-      $("tab-basic").classList.toggle("hidden", t.dataset.tab !== "basic");
-      $("tab-debug").classList.toggle("hidden", t.dataset.tab !== "debug");
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+      $("tab-" + t.dataset.tab).classList.remove("hidden");
+      if (t.dataset.tab === "stats") refreshStats();
     });
   });
 
