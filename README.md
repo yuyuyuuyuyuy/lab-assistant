@@ -32,8 +32,8 @@
 ```bash
 # 1. 安装 Python 3.12+（勾选 Add to PATH）
 # 2. 克隆代码
-git clone https://github.com/yuyuyuuyuyuy/lab-assistant.git
-cd lab-assistant
+git clone https://github.com/yuyuyuuyuyuy/yaojian.git
+cd yaojian
 
 # 3. 创建虚拟环境并安装依赖
 python -m venv venv
